@@ -1,0 +1,258 @@
+name: Step 3 # Last step of the exercise
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+  pull-requests: write
+
+env:
+  REVIEW_FILE: ".github/steps/x-review.md"
+  STEP_4_FILE: ".github/steps/4-step.md"
+
+jobs:
+  find_exercise:
+    name: Find Exercise Issue
+    uses: skills/exercise-toolkit/.github/workflows/find-exercise-issue.yml@v0.7.1
+
+  # 1) À l'ouverture/mise à jour de la PR, afficher l'Étape 4 (merge)
+  step4_merge_guidance:
+    name: Step 4, merge guidance
+    needs: [find_exercise]
+    if: ${{ github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize') }}
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect PR mergeability
+        id: prinfo
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            core.setOutput('mergeable_state', pr.mergeable_state || 'unknown');
+
+      - name: Build status line
+        id: status
+        run: |
+          state='${{ steps.prinfo.outputs.mergeable_state }}'
+          if [ "$state" = "clean" ] || [ "$state" = "unstable" ] || [ "$state" = "blocked" ]; then
+            echo "line=✅ Pas de conflit bloquant détecté, tu peux **fusionner** ta PR" >> $GITHUB_OUTPUT
+          elif [ "$state" = "dirty" ]; then
+            echo "line=⚠️ Conflits détectés, suis les étapes ci-dessous pour les résoudre" >> $GITHUB_OUTPUT
+          else
+            echo "line=ℹ️ État de fusion inconnu pour le moment, suis le guide ci-dessous si GitHub indique des conflits" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Find existing Step 4 comment
+        id: find
+        uses: peter-evans/find-comment@v3
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-author: github-actions[bot]
+          body-includes: "## Étape 4, résoudre les conflits et fusionner"
+
+      - name: Create or update Step 4 comment
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.STEP_4_FILE }}
+          edit-mode: ${{ steps.find.outputs.comment-id && 'replace' || 'append' }}
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          vars: |
+            status_line: ${{ steps.status.outputs.line }}
+
+  # 2) Au merge, lancer le workflow de fin
+  finish_exercise:
+    name: Finish Exercise
+    needs: [find_exercise]
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true }}
+    uses: skills/exercise-toolkit/.github/workflows/finish-exercise.yml@v0.7.1
+    with:
+      issue-url: ${{ needs.find_exercise.outputs.issue-url }}
+      exercise-title: "GitHub Basics"
+      update-readme-with-congratulations: false
+
+  # 3) Remplacer le commentaire "Congratulations..." par une version FR
+  fr_congrats_comment:
+    name: Replace official congrats with FR
+    needs: [find_exercise, finish_exercise]
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+    steps:
+      - name: Replace EN comment with FR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const issue_number = Number('${{ env.ISSUE_NUMBER }}');
+
+            // Corps FR de remplacement
+            const frBody = [
+              `🎉 Félicitations @${context.actor} tu as terminé l’exercice **GitHub Basics**.`,
+              `Le dépôt a été mis à jour pour marquer la réussite, et le README affiche un message de félicitations en français.`,
+              `➡️ Retourne à la page d’accueil du dépôt pour voir le résultat.`
+            ].join('\n\n');
+
+            // Cherche le dernier commentaire du bot contenant "Congratulations"
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100, sort: 'created', direction: 'desc'
+            });
+
+            const target = comments.find(c =>
+              c.user?.login === 'github-actions[bot]' &&
+              /Congratulations|You finished the exercise/i.test(c.body || '')
+            );
+
+            if (target) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: target.id, body: frBody });
+            } else {
+              // Par sécurité, si on ne trouve pas le commentaire EN on poste le FR
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: frBody });
+            }
+
+  # 4) Mettre à jour le README avec le bloc de félicitations
+  finalize_fr:
+    name: Finalize FR
+    needs: [find_exercise, finish_exercise, fr_congrats_comment]
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Update README with final FR block and share links
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const {owner, repo} = context.repo;
+            const login = context.actor;
+            const repoUrl = `https://github.com/${owner}/${repo}`;
+            const text = `Je viens de terminer l’exercice "GitHub Basics" ! 🎉\n\n${repoUrl}\n\n#GitHubSkills #OpenSource #GitHubLearn`;
+            const enc = encodeURIComponent(text);
+            const shareX = `https://twitter.com/intent/tweet?text=${enc}`;
+            const shareBsky = `https://bsky.app/intent/compose?text=${enc}`;
+            const shareLinkedIn = `https://www.linkedin.com/feed/?shareActive=true&text=${enc}`;
+
+            const lines = [
+              '<div align="center">',
+              '',
+              '# 🎉 Félicitations ' + login + ' ! 🎉',
+              '',
+              '<img src="https://octodex.github.com/images/welcometocat.png" height="200px" />',
+              '',
+              '### 🌟 Tu as terminé l’exercice avec succès ! 🌟',
+              '',
+              '## 🚀 Partage ta réussite',
+              '',
+              '**Montre tes nouvelles compétences et inspire les autres !**',
+              '',
+              `<a href="${shareX}" target="_blank" rel="noopener noreferrer">`,
+              '  <img src="https://img.shields.io/badge/Partager%20sur%20X-1da1f2?style=for-the-badge&logo=x&logoColor=white" alt="Partager sur X" />',
+              '</a>',
+              `<a href="${shareBsky}" target="_blank" rel="noopener noreferrer">`,
+              '  <img src="https://img.shields.io/badge/Partager%20sur%20Bluesky-0085ff?style=for-the-badge&logo=bluesky&logoColor=white" alt="Partager sur Bluesky" />',
+              '</a>',
+              `<a href="${shareLinkedIn}" target="_blank" rel="noopener noreferrer">`,
+              '  <img src="https://img.shields.io/badge/Partager%20sur%20LinkedIn-0077b5?style=for-the-badge&logo=linkedin&logoColor=white" alt="Partager sur LinkedIn" />',
+              '</a>',
+              '',
+              '### 🎯 Et maintenant ?',
+              '',
+              '**Garde l’élan !**',
+              '',
+              `[![](https://img.shields.io/badge/Revenir%20%C3%A0%20l%27exercice-%E2%86%92-1f883d?style=for-the-badge&logo=github&labelColor=197935)](${repoUrl}/issues/${process.env.ISSUE_NUMBER})`,
+              '[![GitHub Skills](https://img.shields.io/badge/D%C3%A9couvrir%20GitHub%20Skills-000000?style=for-the-badge&logo=github&logoColor=white)](https://learn.github.com/skills)',
+              '',
+              '*Il n’y a pas de meilleure façon d’apprendre que de construire des choses !* 🚀',
+              '',
+              '</div>',
+              '',
+              '---',
+              ''
+            ];
+            const block = lines.join('\n');
+            const readmePath = path.join(process.env.GITHUB_WORKSPACE, 'README.md');
+            const current = fs.existsSync(readmePath) ? fs.readFileSync(readmePath, 'utf8') : '';
+            fs.writeFileSync(readmePath, block + current, 'utf8');
+
+      - name: Commit and push final README
+        shell: bash
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -e
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs(readme): add final congratulations block 🎉"
+          fi
+          git fetch origin main
+          git pull --rebase origin main || true
+          git push origin HEAD:main
+
+  # 5) Revue finale en FR, publiée après remplacement du message et màj du README
+  post_review_content:
+    name: Post review content, after merge
+    needs: [find_exercise, fr_congrats_comment, finalize_fr]
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create comment, step finished, final review next
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/i18n/fr/lesson-review.md
+
+      - name: Create comment, add review content
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.REVIEW_FILE }}
+
+  # 6) Désactivation une fois tout terminé
+  disable_step3:
+    name: Disable Step 3
+    needs: [post_review_content]
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disable workflow file
+        run: gh workflow disable ".github/workflows/3-last-step.yml"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true

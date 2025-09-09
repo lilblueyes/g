@@ -1,0 +1,132 @@
+name: Step 2
+
+on:
+  # Valide automatiquement les commits sur la branche d’exercice
+  push:
+    branches: [ my-first-branch ]
+    paths:
+      - "playground/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+  pull-requests: write
+
+env:
+  STEP_3_FILE: ".github/steps/3-step.md"
+
+jobs:
+  find_exercise:
+    name: Find Exercise Issue
+    uses: skills/exercise-toolkit/.github/workflows/find-exercise-issue.yml@v0.7.1
+
+  # "Grading" pour vérifier le travail
+  check_step_work:
+    name: Check step work
+    runs-on: ubuntu-latest
+    needs: [find_exercise]
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find last comment
+        id: find-last-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          direction: last
+
+      - name: Update comment - checking work
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-id: ${{ steps.find-last-comment.outputs.comment-id }}
+          file: .github/i18n/fr/checking-work.md
+          edit-mode: replace
+
+      # START: Checks
+      - name: Check if playground/README.md exists
+        id: check-file-exists
+        continue-on-error: true
+        uses: skills/exercise-toolkit/actions/file-exists@v0.7.1
+        with:
+          file: playground/README.md
+
+      - name: Check keyphrase "Hello" in playground/README.md
+        id: check-for-keyphrase
+        continue-on-error: true
+        uses: skills/action-keyphrase-checker@v1
+        with:
+          text-file: playground/README.md
+          keyphrase: Hello
+
+      - name: Update comment - step results
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-id: ${{ steps.find-last-comment.outputs.comment-id }}
+          edit-mode: replace
+          file: .github/i18n/fr/step-results-table.md
+          vars: |
+            step_number: 2
+            results_table:
+              - description: "Vérifier que playground/README.md existe"
+                passed: ${{ steps.check-file-exists.outcome == 'success' }}
+              - description: "Chercher le mot 'Hello' dans playground/README.md"
+                passed: ${{ steps.check-for-keyphrase.outcome == 'success' }}
+      # END: Checks
+
+      - name: Fail job if not all checks passed
+        if: contains(steps.*.outcome, 'failure')
+        run: exit 1
+
+  post_next_step_content:
+    name: Post next step content
+    needs: [find_exercise, check_step_work]
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create comment - step finished
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/i18n/fr/step-finished-prepare-next-step.md
+          vars: |
+            next_step_number: 3
+
+      - name: Create comment - add step content
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.STEP_3_FILE }}
+
+      - name: Create comment - watching for progress
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/i18n/fr/watching-for-progress.md
+
+      - name: Disable current workflow and enable next one
+        run: |
+          gh workflow disable "${{ github.workflow }}"
+          gh workflow enable ".github/workflows/3-last-step.yml"
+        env:
+          GH_TOKEN: ${{ github.token }}
