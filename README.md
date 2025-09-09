@@ -1,16 +1,22 @@
-# GitHub Basics
+﻿# Introduction à GitHub
 
-<img src="https://octodex.github.com/images/Professortocat_v2.png" align="right" height="200px" />
+_Démarre sur GitHub en moins d’une heure._
 
-Hey lilblueyes!
+## Bienvenue
 
-Mona here. I'm done preparing your exercise. Hope you enjoy! 💚
+Salut @lilblueyes ! Bienvenue dans cet exercice **GitHub Skills**.
 
-Remember, it's self-paced so feel free to take a break! ☕️
+- **Pour qui**: nouveaux développeurs, nouveaux utilisateurs GitHub, étudiants
+- **Tu vas apprendre**: dépôts, branches, commits, pull requests
+- **Tu vas construire**: une petite modif proposée via une pull request
+- **Prérequis**: aucun
+- **Durée**: moins d’une heure
 
-[![](https://img.shields.io/badge/Go%20to%20Exercise-%E2%86%92-1f883d?style=for-the-badge&logo=github&labelColor=197935)](https://github.com/lilblueyes/g/issues/1)
+### Démarrer le cours
 
----
+Crée un dépôt depuis la template avec le bouton du README, attends ~20 s, puis rafraîchis.  
+Les étapes apparaissent dans l’onglet **Issues**.  
+Ton issue d’exercice: https://github.com/lilblueyes/g/issues/1
 
-&copy; 2025 GitHub &bull; [Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md) &bull; [MIT License](https://gh.io/mit)
+&copy; 2025 GitHub • Code of Conduct • MIT License
 
